@@ -1,0 +1,254 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  collection,
+  doc,
+  increment,
+  onSnapshot,
+  serverTimestamp,
+  writeBatch,
+} from "firebase/firestore";
+import { db, SHOP_ID } from "../lib/firebase";
+import { normalizeStock, number, validateSale } from "../lib/domain";
+
+const shopCollection = (name) => collection(db, "shops", SHOP_ID, name);
+const cleanImei = (value) => String(value || "").replace(/\D/g, "");
+const date = () => new Date().toISOString().slice(0, 10);
+
+export function useShopData(user) {
+  const [data, setData] = useState({ entries: [], stock: [], customers: [] });
+  const [sync, setSync] = useState({
+    state: navigator.onLine ? "connecting" : "offline",
+    message: "",
+    pending: false,
+    fromCache: false,
+  });
+
+  useEffect(() => {
+    const online = () => setSync((value) => ({ ...value, state: "connecting" }));
+    const offline = () => setSync((value) => ({ ...value, state: "offline" }));
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    return () => {
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user || !db) return undefined;
+    const pendingBySource = {};
+    const cacheBySource = {};
+    const unsubscribe = ["entries", "stock", "customers"].map((name) =>
+      onSnapshot(
+        shopCollection(name),
+        { includeMetadataChanges: true },
+        (snapshot) => {
+          const records = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+          records.sort((a, b) => {
+            const left = a.createdAt?.toMillis?.() || Date.parse(a.date || 0) || 0;
+            const right = b.createdAt?.toMillis?.() || Date.parse(b.date || 0) || 0;
+            return right - left;
+          });
+          setData((value) => ({ ...value, [name]: records }));
+          pendingBySource[name] = snapshot.metadata.hasPendingWrites;
+          cacheBySource[name] = snapshot.metadata.fromCache;
+          const pending = Object.values(pendingBySource).some(Boolean);
+          const fromCache = Object.values(cacheBySource).some(Boolean);
+          setSync({
+            state: !navigator.onLine ? "offline" : pending ? "syncing" : "synced",
+            pending,
+            fromCache,
+            message: "",
+          });
+        },
+        (error) =>
+          setSync({
+            state: "failed",
+            message: `${name}: ${error.message}`,
+            pending: false,
+            fromCache: false,
+          }),
+      ),
+    );
+    return () => unsubscribe.forEach((stop) => stop());
+  }, [user]);
+
+  const commit = useCallback(async (batch) => {
+    setSync((value) => ({ ...value, state: navigator.onLine ? "syncing" : "offline" }));
+    const pendingCommit = batch.commit();
+    if (!navigator.onLine) {
+      pendingCommit.catch((error) =>
+        setSync({ state: "failed", message: error.message, pending: false, fromCache: true }),
+      );
+      return { queued: true };
+    }
+    await pendingCommit;
+    return { queued: false };
+  }, []);
+
+  const auditFields = useCallback(
+    () => ({
+      shopId: SHOP_ID,
+      createdBy: user.uid,
+      createdByEmail: user.email || "",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      date: date(),
+      version: 1,
+    }),
+    [user],
+  );
+
+  const addStock = useCallback(
+    async (form) => {
+      const imeiSerial = cleanImei(form.imeiSerial);
+      if (!form.model?.trim()) throw new Error("Model / device name is required");
+      if (number(form.quantity) < 1) throw new Error("Quantity must be at least 1");
+      if (number(form.buyPrice) <= 0) throw new Error("Buy price is required");
+
+      const batch = writeBatch(db);
+      const stockRef = doc(shopCollection("stock"));
+      const entryRef = doc(shopCollection("entries"));
+      const item = {
+        ...auditFields(),
+        category: form.category || "Used Phone",
+        brand: form.brand?.trim() || "",
+        model: form.model.trim(),
+        storage: form.storage?.trim() || "",
+        color: form.color?.trim() || "",
+        imeiSerial,
+        quantity: number(form.quantity),
+        soldQuantity: 0,
+        buyPrice: number(form.buyPrice),
+        preparationCost: number(form.preparationCost),
+        sellPrice: number(form.sellPrice),
+        supplierName: form.supplierName?.trim() || "",
+        warrantyDays: number(form.warrantyDays),
+        notes: form.notes?.trim() || "",
+        status: "in_stock",
+      };
+      batch.set(stockRef, item);
+      batch.set(entryRef, {
+        ...auditFields(),
+        type: "buy",
+        stockId: stockRef.id,
+        amount: (item.buyPrice + item.preparationCost) * item.quantity,
+        product: `${item.brand} ${item.model}`.trim(),
+        imeiSerial,
+      });
+      if (imeiSerial) {
+        batch.set(doc(db, "shops", SHOP_ID, "imeiIndex", imeiSerial), {
+          stockId: stockRef.id,
+          active: true,
+          ...auditFields(),
+        });
+      }
+      return commit(batch);
+    },
+    [auditFields, commit],
+  );
+
+  const saveSale = useCallback(
+    async (form) => {
+      const stockItem = data.stock.find((item) => item.id === form.stockId);
+      const errors = validateSale({ ...form, stockItem });
+      if (errors.length) throw new Error(errors.join(". "));
+      const item = normalizeStock(stockItem);
+      const due = Math.max(0, number(form.finalSellPrice) - number(form.paidAmount));
+      const customerId = String(form.customerPhone || "").replace(/\D/g, "") || null;
+      const batch = writeBatch(db);
+      const entryRef = doc(shopCollection("entries"));
+
+      batch.update(doc(db, "shops", SHOP_ID, "stock", item.id), {
+        soldQuantity: increment(1),
+        status: item.availableQty === 1 ? "sold" : "in_stock",
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(entryRef, {
+        ...auditFields(),
+        type: "sale",
+        stockId: item.id,
+        product: `${item.brand} ${item.model}`.trim(),
+        imeiSerial: item.imeiSerial,
+        buyPrice: item.buyPrice,
+        preparationCost: item.preparationCost,
+        askingPrice: item.sellPrice,
+        finalSellPrice: number(form.finalSellPrice),
+        paidAmount: number(form.paidAmount),
+        dueAmount: due,
+        paymentMethod: form.paymentMethod || "cash",
+        paymentStatus: due > 0 ? "due" : "paid",
+        customerName: form.customerName?.trim() || "",
+        customerPhone: form.customerPhone?.trim() || "",
+        customerAddress: form.customerAddress?.trim() || "",
+      });
+      if (item.imeiSerial && item.availableQty === 1) {
+        batch.update(doc(db, "shops", SHOP_ID, "imeiIndex", cleanImei(item.imeiSerial)), {
+          active: false,
+          soldEntryId: entryRef.id,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      if (due > 0 && customerId) {
+        batch.set(
+          doc(db, "shops", SHOP_ID, "customers", customerId),
+          {
+            name: form.customerName.trim(),
+            phone: form.customerPhone.trim(),
+            address: form.customerAddress?.trim() || "",
+            dueBalance: increment(due),
+            totalDueCreated: increment(due),
+            updatedAt: serverTimestamp(),
+            shopId: SHOP_ID,
+          },
+          { merge: true },
+        );
+      }
+      return commit(batch);
+    },
+    [auditFields, commit, data.stock],
+  );
+
+  const collectDue = useCallback(
+    async (customer, amount) => {
+      const paid = number(amount);
+      if (!paid || paid > number(customer.dueBalance)) throw new Error("Enter a valid collection amount");
+      const batch = writeBatch(db);
+      batch.update(doc(db, "shops", SHOP_ID, "customers", customer.id), {
+        dueBalance: increment(-paid),
+        totalCollected: increment(paid),
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(shopCollection("entries")), {
+        ...auditFields(),
+        type: "due_collection",
+        amount: paid,
+        customerId: customer.id,
+        customerName: customer.name,
+        customerPhone: customer.phone,
+      });
+      return commit(batch);
+    },
+    [auditFields, commit],
+  );
+
+  const addExpense = useCallback(
+    async ({ amount, note }) => {
+      if (number(amount) <= 0 || !note?.trim()) throw new Error("Amount and description are required");
+      const batch = writeBatch(db);
+      batch.set(doc(shopCollection("entries")), {
+        ...auditFields(),
+        type: "expense",
+        amount: number(amount),
+        note: note.trim(),
+      });
+      return commit(batch);
+    },
+    [auditFields, commit],
+  );
+
+  return useMemo(
+    () => ({ ...data, sync, addStock, saveSale, collectDue, addExpense }),
+    [data, sync, addStock, saveSale, collectDue, addExpense],
+  );
+}

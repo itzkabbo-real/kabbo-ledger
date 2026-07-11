@@ -1,0 +1,33 @@
+{
+  "name": "kabbo-digital-ledger",
+  "version": "4.0.0",
+  "description": "Realtime shared ledger and POS for Kabbo Mobile Shop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itzkabbo-real/kabbo-ledger.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/itzkabbo-real/kabbo-ledger/issues"
+  },
+  "homepage": "https://github.com/itzkabbo-real/kabbo-ledger#readme",
+  "dependencies": {
+    "firebase": "^12.16.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.3",
+    "vite": "^8.1.4"
+  }
+}

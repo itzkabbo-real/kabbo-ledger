@@ -1,0 +1,98 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hardcodedOwner() {
+      return signedIn() && (
+        request.auth.uid == "Etx7842cBTNxw2D92fUOIGOnMI52" ||
+        request.auth.token.email == "aryanshaykat331@gmail.com"
+      );
+    }
+
+    function memberPath(shopId) {
+      return /databases/$(database)/documents/shops/$(shopId)/members/$(request.auth.uid);
+    }
+
+    function membership(shopId) {
+      return get(memberPath(shopId));
+    }
+
+    function activeMember(shopId) {
+      return hardcodedOwner() || (
+        signedIn() &&
+        exists(memberPath(shopId)) &&
+        membership(shopId).data.active != false &&
+        membership(shopId).data.role in ["owner", "manager", "staff", "viewer"]
+      );
+    }
+
+    function role(shopId) {
+      return hardcodedOwner() ? "owner" : membership(shopId).data.role;
+    }
+
+    function canWrite(shopId) {
+      return activeMember(shopId) && role(shopId) in ["owner", "manager", "staff"];
+    }
+
+    function canManage(shopId) {
+      return activeMember(shopId) && role(shopId) in ["owner", "manager"];
+    }
+
+    match /shops/{shopId} {
+      allow read: if activeMember(shopId);
+      allow write: if false;
+
+      match /members/{uid} {
+        allow get: if signedIn() && (uid == request.auth.uid || hardcodedOwner());
+        allow list: if hardcodedOwner();
+        allow create, update, delete: if hardcodedOwner();
+      }
+
+      match /entries/{entryId} {
+        allow read: if activeMember(shopId);
+        allow create: if canWrite(shopId)
+          && request.resource.data.shopId == shopId
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.type in ["buy", "sale", "exchange", "expense", "due_collection"];
+        allow update, delete: if false;
+      }
+
+      match /stock/{stockId} {
+        allow read: if activeMember(shopId);
+        allow create: if canWrite(shopId)
+          && request.resource.data.shopId == shopId
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.quantity >= 1
+          && request.resource.data.soldQuantity == 0;
+        allow update: if canWrite(shopId)
+          && request.resource.data.shopId == resource.data.shopId
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.quantity == resource.data.quantity
+          && request.resource.data.soldQuantity >= resource.data.soldQuantity
+          && request.resource.data.soldQuantity <= request.resource.data.quantity;
+        allow delete: if false;
+      }
+
+      match /customers/{customerId} {
+        allow read: if activeMember(shopId);
+        allow create, update: if canWrite(shopId)
+          && request.resource.data.shopId == shopId
+          && request.resource.data.dueBalance >= 0;
+        allow delete: if false;
+      }
+
+      match /imeiIndex/{imei} {
+        allow read: if activeMember(shopId);
+        allow create: if canWrite(shopId) && request.resource.data.shopId == shopId;
+        allow update: if canWrite(shopId)
+          && request.resource.data.shopId == resource.data.shopId
+          && request.resource.data.stockId == resource.data.stockId;
+        allow delete: if false;
+      }
+    }
+  }
+}
