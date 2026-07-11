@@ -55,7 +55,7 @@ body {
 .main-content {
   flex: 1;
   padding: 16px;
-  padding-bottom: 92px;
+  padding-bottom: calc(110px + env(safe-area-inset-bottom));
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
@@ -223,6 +223,28 @@ body {
   background: rgba(217, 119, 6, 0.08);
   color: var(--warning);
   border-color: rgba(217, 119, 6, 0.25);
+}
+
+.sync-banner--error {
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--danger);
+  border-color: rgba(220, 38, 38, 0.25);
+}
+
+.sync-banner--warn {
+  background: rgba(217, 119, 6, 0.08);
+  color: var(--warning);
+  border-color: rgba(217, 119, 6, 0.25);
+}
+
+.sync-banner-detail {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.sync-banner strong {
+  display: block;
 }
 
 .grid-form {
@@ -446,6 +468,9 @@ select:focus {
 
 .receipt {
   border-color: rgba(255, 94, 19, 0.35);
+  position: sticky;
+  bottom: calc(88px + env(safe-area-inset-bottom));
+  z-index: 2;
 }
 
 .invoice-no {

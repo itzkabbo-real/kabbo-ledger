@@ -5,7 +5,7 @@ const TABS = [
   { id: 'dues', label: 'Dues', roles: ['owner', 'manager', 'staff'] },
   { id: 'ledger', label: 'Ledger', roles: ['owner', 'manager', 'staff'] },
   { id: 'reports', label: 'Reports', roles: ['owner', 'manager'] },
-  { id: 'settings', label: 'Settings', roles: ['owner'] },
+  { id: 'settings', label: 'Settings', roles: ['owner', 'manager'] },
 ];
 
 export default function Nav({ active, onChange, role }) {

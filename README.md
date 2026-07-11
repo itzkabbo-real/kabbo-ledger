@@ -26,6 +26,26 @@ with these core modules:
 
 Kabbo keeps its **existing tab structure** — modules are upgraded, not renamed or removed.
 
+## Manager sync complaints (fixed)
+
+Prior reports (manager screenshots + live-site audit) showed:
+
+1. **Manager writes never reached owner feed** — invite-only membership blocked member-doc creation; failures were silent (`.catch(() => {})`).
+2. **New logins landed as `staff`** — floor managers could not write stock/sales under tightened rules.
+3. **Errors looked like “offline”** — permission-denied was not shown in the UI.
+
+**Fixes in this branch:**
+
+- New accounts self-join as **`manager`** (can write) without requiring a pre-existing invite.
+- Legacy **`staff` → `manager`** auto-upgrade on login (unless invite explicitly says staff).
+- **`SyncBanner`** on every screen: online / offline / permission-denied / setting up access.
+- **Settings** visible to managers — sync status + team list; owner can set roles.
+- Invites accept **email or phone** (`01XXXXXXXXX` → `phone.880…@kabbomobile.shop`).
+- Firestore writes require **owner or manager**; staff is view-only.
+- POS/Stock show clear **permission denied** messages instead of failing silently.
+
+**After deploy:** publish `firestore.rules`, redeploy Netlify, then each manager must **sign out and sign back in once**.
+
 ## Root cause of "manager input never reaches my feed"
 
 The previous build (see `docs/history/` reports carried over from the prior work)

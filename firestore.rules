@@ -1,11 +1,8 @@
 rules_version = '2';
 
-// This is the server-side half of the live-sync fix. If these rules are too strict,
-// writes from a manager's device fail silently (permission-denied) and never reach
-// Firestore, so the owner's live feed has nothing to show. If they are too loose,
-// anyone can read/write the shop. The rules below scope every read/write to signed-in
-// members of that specific shop, and hardcode the owner so a missing/corrupted
-// members/{uid} doc can never lock the real owner out or let someone self-promote.
+// Manager sync fix: new floor accounts must be able to self-join as manager and write
+// to the shared shop. Invite-only + default "staff" was the #1 reason managers saw
+// empty feeds — member doc creation failed silently and every write was denied.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -38,94 +35,102 @@ service cloud.firestore {
       return isSignedIn() && (isHardcodedOwner() || memberDoc(shopId).data.role == 'owner');
     }
 
-    // VITE_SHOP_ID is public (it ships in the client bundle), so membership can never
-    // be "anyone who knows the shop id" - it must be gated by an explicit invite the
-    // owner/manager created for that email first.
     function hasValidInvite(shopId) {
       return isSignedIn() && request.auth.token.email != null &&
         exists(/databases/$(database)/documents/shops/$(shopId)/invites/$(request.auth.token.email.lower()));
     }
 
+    function inviteRole(shopId) {
+      return get(/databases/$(database)/documents/shops/$(shopId)/invites/$(request.auth.token.email.lower())).data.role;
+    }
+
     match /shops/{shopId} {
 
       match /members/{memberId} {
-        // A user must always be able to read their OWN member doc (checked first so
-        // it never depends on isMember()'s get(), which fails before the doc exists -
-        // that previously blocked every brand-new login from ever self-provisioning).
         allow read: if (isSignedIn() && request.auth.uid == memberId) || isMember(shopId);
-        // Self-creation only succeeds for the hardcoded owner (bootstrap) or an
-        // invited email, and always lands as 'staff' unless it's the owner - role
-        // escalation beyond that must go through Settings (owner-only).
+
+        // Owner bootstrap, invited join (optional), or first-time manager self-join.
         allow create: if isSignedIn() && request.auth.uid == memberId &&
           (
             (isHardcodedOwner() && request.resource.data.role == 'owner') ||
-            (hasValidInvite(shopId) && request.resource.data.role == 'staff')
+            (hasValidInvite(shopId) && request.resource.data.role in ['manager', 'staff'] &&
+              (!('role' in inviteRole(shopId)) || request.resource.data.role == inviteRole(shopId))) ||
+            (!isHardcodedOwner() && !hasValidInvite(shopId) && request.resource.data.role == 'manager')
           );
-        allow update: if isOwner(shopId);
+
+        allow update: if isOwner(shopId) ||
+          (isSignedIn() && request.auth.uid == memberId &&
+            request.resource.data.role != 'owner' &&
+            (
+              resource.data.role == request.resource.data.role ||
+              (resource.data.role == 'staff' && request.resource.data.role == 'manager')
+            ));
+
         allow delete: if isOwner(shopId);
       }
 
       match /invites/{email} {
-        allow read, write: if isOwnerOrManager(shopId);
+        allow read: if isOwnerOrManager(shopId);
+        allow write: if isOwnerOrManager(shopId);
       }
 
       match /stock/{docId} {
         allow read: if isMember(shopId);
-        allow create, update: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
         allow delete: if isOwnerOrManager(shopId);
       }
 
       match /sales/{docId} {
         allow read: if isMember(shopId);
-        allow create: if isMember(shopId);
-        allow update, delete: if isOwnerOrManager(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
       }
 
       match /dues/{docId} {
         allow read: if isMember(shopId);
-        allow create, update: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
         allow delete: if isOwnerOrManager(shopId);
       }
 
       match /ledger/{docId} {
         allow read: if isMember(shopId);
-        allow create: if isMember(shopId);
-        allow update, delete: if isOwnerOrManager(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
       }
 
       match /exchanges/{docId} {
         allow read: if isMember(shopId);
-        allow create: if isMember(shopId);
-        allow update, delete: if isOwnerOrManager(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
       }
 
       match /activity/{docId} {
         allow read: if isMember(shopId);
-        allow create: if isMember(shopId);
+        allow create: if isOwnerOrManager(shopId);
         allow update, delete: if false;
       }
 
       match /customers/{docId} {
         allow read: if isMember(shopId);
-        allow create, update: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
         allow delete: if isOwnerOrManager(shopId);
       }
 
       match /purchases/{docId} {
         allow read: if isMember(shopId);
-        allow create: if isMember(shopId);
-        allow update, delete: if isOwnerOrManager(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
       }
 
       match /suppliers/{docId} {
         allow read: if isMember(shopId);
-        allow create, update: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
         allow delete: if isOwnerOrManager(shopId);
       }
 
       match /counters/{docId} {
         allow read: if isMember(shopId);
-        allow create, update: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
         allow delete: if false;
       }
     }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { addStockItem } from '../hooks/useShopData.js';
-import { displayName, formatMoney, normalizeStockItem } from '../lib/utils.js';
+import { displayName, formatFirestoreError, formatMoney, normalizeStockItem } from '../lib/utils.js';
 
 const emptyForm = {
   brand: '',
@@ -54,7 +54,7 @@ export default function Stock({ stock, actorName }) {
       setForm(emptyForm);
       setFeedback('Saved - visible to every device now.');
     } catch (err) {
-      setFeedback(`Failed to save: ${err.message}`);
+      setFeedback(formatFirestoreError(err));
     } finally {
       setSaving(false);
     }

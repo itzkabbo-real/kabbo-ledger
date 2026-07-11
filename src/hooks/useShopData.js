@@ -20,9 +20,10 @@ function subscribe(colName, orderField, setState, setError) {
   return onSnapshot(
     ref,
     (snap) => {
+      setError?.(null);
       setState(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     },
-    (err) => setError?.(err)
+    (err) => setError?.({ code: err.code, message: err.message || 'Sync failed' })
   );
 }
 

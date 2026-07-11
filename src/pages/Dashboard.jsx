@@ -12,7 +12,7 @@ import {
 } from '../lib/calculations.js';
 import { formatMoney, normalizeSale, timeAgo } from '../lib/utils.js';
 
-export default function Dashboard({ shopData, online }) {
+export default function Dashboard({ shopData }) {
   const { stock, sales, dues, ledger, activity, stockById, purchases } = shopData;
   const dueCollections = ledger.filter((l) => l.type === 'due_collection');
   const stats = dashboardStats(sales, purchases, ledger, stockById);
@@ -23,10 +23,6 @@ export default function Dashboard({ shopData, online }) {
 
   return (
     <div className="page">
-      <div className="sync-banner" data-online={online}>
-        {online ? 'Online — synced live across every device' : 'Offline — changes queue and sync when back online'}
-      </div>
-
       <div className="stat-grid stat-grid--shopstick">
         <StatBox label="Total Sales (30d)" value={formatMoney(stats.totalSales)} accent />
         <StatBox label="Profit (30d)" value={formatMoney(stats.salesProfit)} />

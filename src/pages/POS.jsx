@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { recordSale } from '../hooks/useShopData.js';
-import { displayName, formatMoney, normalizeStockItem } from '../lib/utils.js';
+import { displayName, formatFirestoreError, formatMoney, normalizeStockItem } from '../lib/utils.js';
 
 export default function POS({ stock, customers, actorName }) {
   const inStock = useMemo(() => stock.map(normalizeStockItem).filter((s) => s.status === 'in_stock'), [stock]);
@@ -14,6 +14,7 @@ export default function POS({ stock, customers, actorName }) {
   const [customerAddress, setCustomerAddress] = useState('');
   const [saving, setSaving] = useState(false);
   const [receipt, setReceipt] = useState(null);
+  const [error, setError] = useState('');
 
   const selected = inStock.find((s) => s.id === stockItemId);
   const subtotal = Number(sellPrice) || 0;
@@ -32,6 +33,7 @@ export default function POS({ stock, customers, actorName }) {
   async function handleSell(e) {
     e.preventDefault();
     setSaving(true);
+    setError('');
     try {
       const sale = {
         stockItemId,
@@ -60,6 +62,8 @@ export default function POS({ stock, customers, actorName }) {
       setCustomerName('');
       setCustomerPhone('');
       setCustomerAddress('');
+    } catch (err) {
+      setError(formatFirestoreError(err));
     } finally {
       setSaving(false);
     }
@@ -119,6 +123,7 @@ export default function POS({ stock, customers, actorName }) {
               <input placeholder="Customer full address" value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} required />
             </>
           )}
+          {error && <p className="error-text">{error}</p>}
           <button className="btn btn-primary" type="submit" disabled={saving || !stockItemId}>
             {saving ? 'Recording sale...' : 'Complete sale'}
           </button>

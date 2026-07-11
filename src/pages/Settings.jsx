@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { collection, deleteDoc, doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { db, SHOP_ID } from '../firebase.js';
+import { authEmailToPhone, inviteKeyFromInput, phoneToAuthEmail } from '../lib/utils.js';
 
-export default function Settings({ user, role }) {
+export default function Settings({ user, role, memberError, memberReady }) {
   const [members, setMembers] = useState([]);
   const [invites, setInvites] = useState([]);
-  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteContact, setInviteContact] = useState('');
+  const [inviteRoleChoice, setInviteRoleChoice] = useState('manager');
   const [telegram, setTelegram] = useState({ status: 'checking' });
+  const [feedback, setFeedback] = useState('');
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'shops', SHOP_ID, 'members'), (snap) => {
@@ -36,23 +39,46 @@ export default function Settings({ user, role }) {
 
   async function sendInvite(e) {
     e.preventDefault();
-    const email = inviteEmail.trim().toLowerCase();
-    if (!email) return;
-    // Membership is gated by this doc - without it, VITE_SHOP_ID being public in the
-    // client bundle would otherwise let any signed-in Google/email account join.
-    await setDoc(doc(db, 'shops', SHOP_ID, 'invites', email), {
+    const key = inviteKeyFromInput(inviteContact);
+    if (!key) return;
+    await setDoc(doc(db, 'shops', SHOP_ID, 'invites', key), {
       invitedBy: user?.email || 'owner',
+      role: inviteRoleChoice,
       createdAt: serverTimestamp(),
     });
-    setInviteEmail('');
+    setInviteContact('');
+    setFeedback(`Invite saved for ${key}. They must sign in with that exact account.`);
   }
 
   async function revokeInvite(email) {
     await deleteDoc(doc(db, 'shops', SHOP_ID, 'invites', email));
   }
 
+  const phone = authEmailToPhone(user?.email || '');
+
   return (
     <div className="page">
+      <div className="card">
+        <h3>Sync status</h3>
+        {memberError ? (
+          <>
+            <p className="status-pill status-pill--due">Blocked</p>
+            <p className="error-text">{memberError.message}</p>
+            <p className="muted small">
+              Managers: sign out completely, then sign back in after the owner sets your role to Manager below.
+            </p>
+          </>
+        ) : memberReady ? (
+          <p className="status-pill status-pill--in_stock">Connected — live sync active</p>
+        ) : (
+          <p className="muted">Setting up shop access…</p>
+        )}
+        <p className="muted small">
+          Role: <strong>{role}</strong>
+          {phone ? ` · Phone ${phone}` : ''}
+        </p>
+      </div>
+
       <div className="card">
         <h3>Telegram alerts</h3>
         {telegram.status === 'connected' && <p className="status-pill status-pill--in_stock">Connected</p>}
@@ -66,30 +92,36 @@ export default function Settings({ user, role }) {
         {telegram.status === 'unreachable' && <p className="muted">Could not reach status endpoint.</p>}
       </div>
 
-      {(role === 'owner' || role === 'manager') && (
+      {role === 'owner' && (
         <div className="card">
           <h3>Invite a team member</h3>
           <p className="muted small">
-            They must sign in with this exact email before they can see or add anything - the shop id alone is not
-            enough to join.
+            Use their Google email <em>or</em> shop phone (01XXXXXXXXX). Phone logins map to{' '}
+            <code>{phoneToAuthEmail('01700000000').replace('01700000000', '01XXXXXXXXX')}</code>.
           </p>
           <form className="grid-form" onSubmit={sendInvite}>
             <input
-              type="email"
-              placeholder="teammate@email.com"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="Email or phone (01XXXXXXXXX)"
+              value={inviteContact}
+              onChange={(e) => setInviteContact(e.target.value)}
               required
             />
+            <select value={inviteRoleChoice} onChange={(e) => setInviteRoleChoice(e.target.value)}>
+              <option value="manager">Manager (can add sales & stock)</option>
+              <option value="staff">Staff (view only)</option>
+            </select>
             <button className="btn btn-primary" type="submit">
               Send invite
             </button>
           </form>
+          {feedback && <p className="muted">{feedback}</p>}
           {invites.length > 0 && (
             <ul className="list">
               {invites.map((inv) => (
                 <li key={inv.id} className="list-row">
-                  <span>{inv.id}</span>
+                  <span>
+                    {inv.id} <span className="muted small">({inv.role || 'manager'})</span>
+                  </span>
                   <button className="btn btn-secondary btn-sm" onClick={() => revokeInvite(inv.id)}>
                     Revoke
                   </button>
@@ -120,6 +152,9 @@ export default function Settings({ user, role }) {
             </li>
           ))}
         </ul>
+        {role === 'manager' && (
+          <p className="muted small">Ask the owner to change roles here if your access looks wrong.</p>
+        )}
       </div>
 
       <div className="card">

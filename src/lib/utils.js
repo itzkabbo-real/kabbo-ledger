@@ -77,6 +77,21 @@ export function formatMoney(value) {
   return `Tk ${num(value).toLocaleString('en-BD')}`;
 }
 
+export function formatFirestoreError(err) {
+  if (!err) return '';
+  if (err.code === 'permission-denied') {
+    return 'Permission denied — your account cannot write to the shop yet. Open Settings or ask the owner to set your role to Manager, then sign out and back in.';
+  }
+  return err.message || 'Something went wrong';
+}
+
+export function inviteKeyFromInput(input = '') {
+  const trimmed = input.trim().toLowerCase();
+  if (trimmed.includes('@')) return trimmed;
+  if (isValidBangladeshPhone(trimmed)) return phoneToAuthEmail(trimmed);
+  return trimmed;
+}
+
 export function timeAgo(ts) {
   if (!ts) return '';
   const date = ts?.toDate ? ts.toDate() : new Date(ts);
