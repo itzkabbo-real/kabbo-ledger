@@ -57,6 +57,16 @@ test("requires customer identity only for due sales", () => {
   assert.deepEqual(validateSale({ stockItem, finalSellPrice: 100, paidAmount: 100 }), []);
   assert.match(
     validateSale({ stockItem, finalSellPrice: 100, paidAmount: 50 }).join(" "),
-    /Customer name and phone/,
+    /Customer name and a valid phone/,
+  );
+  assert.match(
+    validateSale({
+      stockItem,
+      finalSellPrice: 100,
+      paidAmount: 50,
+      customerName: "KABBO_QA_DELETE_ME",
+      customerPhone: "not-a-number",
+    }).join(" "),
+    /valid phone/,
   );
 });

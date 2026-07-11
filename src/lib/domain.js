@@ -85,11 +85,15 @@ export function dashboardMetrics(entries = [], stock = [], customers = []) {
 
 export function validateSale({ stockItem, finalSellPrice, paidAmount, customerName, customerPhone }) {
   const errors = [];
+  const normalizedPhone = String(customerPhone || "").replace(/\D/g, "");
   if (!stockItem || normalizeStock(stockItem).availableQty < 1) errors.push("Select available stock");
   if (number(finalSellPrice) <= 0) errors.push("Final sell price is required");
   if (number(paidAmount) > number(finalSellPrice)) errors.push("Paid amount cannot exceed price");
-  if (number(finalSellPrice) > number(paidAmount) && (!customerName || !customerPhone)) {
-    errors.push("Customer name and phone are required for a due sale");
+  if (
+    number(finalSellPrice) > number(paidAmount) &&
+    (!customerName?.trim() || normalizedPhone.length < 7)
+  ) {
+    errors.push("Customer name and a valid phone are required for a due sale");
   }
   return errors;
 }

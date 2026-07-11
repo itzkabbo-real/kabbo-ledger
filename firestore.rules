@@ -42,6 +42,18 @@ service cloud.firestore {
       return activeMember(shopId) && role(shopId) in ["owner", "manager"];
     }
 
+    function operation(shopId, operationId) {
+      return getAfter(
+        /databases/$(database)/documents/shops/$(shopId)/entries/$(operationId)
+      ).data;
+    }
+
+    function newStock(shopId, stockId) {
+      return getAfter(
+        /databases/$(database)/documents/shops/$(shopId)/stock/$(stockId)
+      ).data;
+    }
+
     match /shops/{shopId} {
       allow read: if activeMember(shopId);
       allow write: if false;
@@ -72,25 +84,79 @@ service cloud.firestore {
           && request.resource.data.shopId == resource.data.shopId
           && request.resource.data.createdBy == resource.data.createdBy
           && request.resource.data.quantity == resource.data.quantity
-          && request.resource.data.soldQuantity >= resource.data.soldQuantity
-          && request.resource.data.soldQuantity <= request.resource.data.quantity;
+          && request.resource.data.soldQuantity == resource.data.soldQuantity + 1
+          && request.resource.data.soldQuantity <= request.resource.data.quantity
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(["soldQuantity", "status", "updatedAt", "lastOperationId"])
+          && operation(shopId, request.resource.data.lastOperationId).type == "sale"
+          && operation(shopId, request.resource.data.lastOperationId).stockId == stockId
+          && (
+            (request.resource.data.soldQuantity == request.resource.data.quantity
+              && request.resource.data.status == "sold") ||
+            (request.resource.data.soldQuantity < request.resource.data.quantity
+              && request.resource.data.status == "in_stock")
+          );
         allow delete: if false;
       }
 
       match /customers/{customerId} {
         allow read: if activeMember(shopId);
-        allow create, update: if canWrite(shopId)
+        allow create: if canWrite(shopId)
           && request.resource.data.shopId == shopId
-          && request.resource.data.dueBalance >= 0;
+          && request.resource.data.dueBalance > 0
+          && operation(shopId, request.resource.data.lastOperationId).type == "sale"
+          && operation(shopId, request.resource.data.lastOperationId).customerId == customerId
+          && request.resource.data.dueBalance
+            == operation(shopId, request.resource.data.lastOperationId).dueAmount;
+        allow update: if canWrite(shopId)
+          && request.resource.data.shopId == resource.data.shopId
+          && request.resource.data.dueBalance >= 0
+          && (
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                "name", "phone", "address", "dueBalance", "totalDueCreated",
+                "updatedAt", "lastOperationId"
+              ])
+              && operation(shopId, request.resource.data.lastOperationId).type == "sale"
+              && operation(shopId, request.resource.data.lastOperationId).customerId == customerId
+              && request.resource.data.dueBalance == resource.data.dueBalance
+                + operation(shopId, request.resource.data.lastOperationId).dueAmount
+            ) ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                "dueBalance", "totalCollected", "updatedAt", "lastOperationId"
+              ])
+              && operation(shopId, request.resource.data.lastOperationId).type == "due_collection"
+              && operation(shopId, request.resource.data.lastOperationId).customerId == customerId
+              && request.resource.data.dueBalance == resource.data.dueBalance
+                - operation(shopId, request.resource.data.lastOperationId).amount
+            )
+          );
         allow delete: if false;
       }
 
       match /imeiIndex/{imei} {
         allow read: if activeMember(shopId);
-        allow create: if canWrite(shopId) && request.resource.data.shopId == shopId;
-        allow update: if canWrite(shopId)
-          && request.resource.data.shopId == resource.data.shopId
-          && request.resource.data.stockId == resource.data.stockId;
+        allow create: if canWrite(shopId)
+          && request.resource.data.shopId == shopId
+          && request.resource.data.active == true
+          && newStock(shopId, request.resource.data.stockId).imeiSerial == imei;
+        allow update: if canWrite(shopId) && (
+          (
+            request.resource.data.shopId == resource.data.shopId
+            && request.resource.data.stockId == resource.data.stockId
+            && request.resource.data.active == false
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(["active", "soldEntryId", "updatedAt"])
+          ) ||
+          (
+            resource.data.active == false
+            && request.resource.data.active == true
+            && request.resource.data.shopId == shopId
+            && request.resource.data.createdBy == request.auth.uid
+            && newStock(shopId, request.resource.data.stockId).imeiSerial == imei
+          )
+        );
         allow delete: if false;
       }
     }

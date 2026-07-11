@@ -163,6 +163,7 @@ export function useShopData(user) {
         soldQuantity: increment(1),
         status: item.availableQty === 1 ? "sold" : "in_stock",
         updatedAt: serverTimestamp(),
+        lastOperationId: entryRef.id,
       });
       batch.set(entryRef, {
         ...auditFields(),
@@ -178,6 +179,7 @@ export function useShopData(user) {
         dueAmount: due,
         paymentMethod: form.paymentMethod || "cash",
         paymentStatus: due > 0 ? "due" : "paid",
+        customerId,
         customerName: form.customerName?.trim() || "",
         customerPhone: form.customerPhone?.trim() || "",
         customerAddress: form.customerAddress?.trim() || "",
@@ -200,6 +202,7 @@ export function useShopData(user) {
             totalDueCreated: increment(due),
             updatedAt: serverTimestamp(),
             shopId: SHOP_ID,
+            lastOperationId: entryRef.id,
           },
           { merge: true },
         );
@@ -214,12 +217,14 @@ export function useShopData(user) {
       const paid = number(amount);
       if (!paid || paid > number(customer.dueBalance)) throw new Error("Enter a valid collection amount");
       const batch = writeBatch(db);
+      const entryRef = doc(shopCollection("entries"));
       batch.update(doc(db, "shops", SHOP_ID, "customers", customer.id), {
         dueBalance: increment(-paid),
         totalCollected: increment(paid),
         updatedAt: serverTimestamp(),
+        lastOperationId: entryRef.id,
       });
-      batch.set(doc(shopCollection("entries")), {
+      batch.set(entryRef, {
         ...auditFields(),
         type: "due_collection",
         amount: paid,
