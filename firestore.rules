@@ -38,16 +38,35 @@ service cloud.firestore {
       return isSignedIn() && (isHardcodedOwner() || memberDoc(shopId).data.role == 'owner');
     }
 
+    // VITE_SHOP_ID is public (it ships in the client bundle), so membership can never
+    // be "anyone who knows the shop id" - it must be gated by an explicit invite the
+    // owner/manager created for that email first.
+    function hasValidInvite(shopId) {
+      return isSignedIn() && request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/shops/$(shopId)/invites/$(request.auth.token.email.lower()));
+    }
+
     match /shops/{shopId} {
 
       match /members/{memberId} {
-        allow read: if isMember(shopId);
-        // Anyone signed in may create their own member doc, but only as staff -
-        // role escalation must go through the owner.
+        // A user must always be able to read their OWN member doc (checked first so
+        // it never depends on isMember()'s get(), which fails before the doc exists -
+        // that previously blocked every brand-new login from ever self-provisioning).
+        allow read: if (isSignedIn() && request.auth.uid == memberId) || isMember(shopId);
+        // Self-creation only succeeds for the hardcoded owner (bootstrap) or an
+        // invited email, and always lands as 'staff' unless it's the owner - role
+        // escalation beyond that must go through Settings (owner-only).
         allow create: if isSignedIn() && request.auth.uid == memberId &&
-          (request.resource.data.role == 'staff' || isHardcodedOwner());
+          (
+            (isHardcodedOwner() && request.resource.data.role == 'owner') ||
+            (hasValidInvite(shopId) && request.resource.data.role == 'staff')
+          );
         allow update: if isOwner(shopId);
         allow delete: if isOwner(shopId);
+      }
+
+      match /invites/{email} {
+        allow read, write: if isOwnerOrManager(shopId);
       }
 
       match /stock/{docId} {

@@ -41,7 +41,10 @@ with real-time listeners (`onSnapshot`):
   demote the real owner to Staff (a previously reported bug) or let anyone
   self-promote to owner/manager. **Rules that are too strict are the #1 cause of
   "sync silently does nothing"** — a denied write never throws in a way most people
-  notice, it just never reaches the server.
+  notice, it just never reaches the server. Because the shop id ships in the public
+  client bundle, joining is gated by an explicit `invites/{email}` doc — the owner or
+  a manager sends an invite from Settings, and only that email can self-provision a
+  `staff` membership; nobody can join just by knowing the shop id.
 - The Netlify functions (`telegram-daily-report`, `low-stock-alert`, `telegram-status`)
   now read live Firestore data with `firebase-admin`, so the 11pm/10am reports and the
   Settings status panel reflect what actually happened in the shop that day, not stale

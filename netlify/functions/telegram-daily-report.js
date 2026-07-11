@@ -1,6 +1,16 @@
 import { getAdminDb, missingEnvVars, sendTelegramMessage } from './_firebaseAdmin.js';
 
 const SHOP_ID = process.env.VITE_SHOP_ID || process.env.SHOP_ID || 'kabbo_mobile_kushtia';
+const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000; // Asia/Dhaka is UTC+6, no DST
+
+// Netlify functions run in UTC regardless of the shop's local time, so computing
+// "today" with setHours() previously anchored to UTC midnight - up to 6 hours of
+// early-morning Dhaka sales were silently dropped from the 11pm closing report.
+function startOfDhakaDayUtc(now = new Date()) {
+  const dhakaNow = new Date(now.getTime() + DHAKA_OFFSET_MS);
+  const dhakaMidnight = Date.UTC(dhakaNow.getUTCFullYear(), dhakaNow.getUTCMonth(), dhakaNow.getUTCDate());
+  return new Date(dhakaMidnight - DHAKA_OFFSET_MS);
+}
 
 export default async () => {
   const missing = missingEnvVars();
@@ -10,8 +20,7 @@ export default async () => {
 
   try {
     const db = getAdminDb();
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDay = startOfDhakaDayUtc();
 
     const [salesSnap, duesSnap] = await Promise.all([
       db
