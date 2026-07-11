@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isHardcodedOwner() {
+      return isSignedIn() && (
+        request.auth.uid == "Etx7842cBTNxw2D92fUOIGOnMI52" ||
+        request.auth.token.email == "aryanshaykat331@gmail.com"
+      );
+    }
+
+    function memberDoc(shopId) {
+      return get(/databases/$(database)/documents/shops/$(shopId)/members/$(request.auth.uid)).data;
+    }
+
+    function isShopMember(shopId) {
+      return isHardcodedOwner() ||
+        (isSignedIn() &&
+          exists(/databases/$(database)/documents/shops/$(shopId)/members/$(request.auth.uid)));
+    }
+
+    function memberRole(shopId) {
+      return isHardcodedOwner() ? "owner" : memberDoc(shopId).role;
+    }
+
+    function canReadShop(shopId) {
+      return isShopMember(shopId) &&
+        memberRole(shopId) in ["owner", "manager", "staff"];
+    }
+
+    function canWriteShop(shopId) {
+      return isShopMember(shopId) &&
+        memberRole(shopId) in ["owner", "manager"];
+    }
+
+    function canManageMembers(shopId) {
+      return isHardcodedOwner() ||
+        (isShopMember(shopId) && memberRole(shopId) == "owner");
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isHardcodedOwner());
+      allow create, update: if isSignedIn() && request.auth.uid == uid
+        && (!("role" in request.resource.data)
+            || request.resource.data.role in ["staff", "manager"]
+            || isHardcodedOwner());
+      allow delete: if isHardcodedOwner();
+    }
+
+    match /shops/{shopId} {
+      allow read: if canReadShop(shopId);
+      allow write: if canManageMembers(shopId);
+
+      match /members/{uid} {
+        allow read: if canReadShop(shopId) || (isSignedIn() && request.auth.uid == uid);
+        // New users may create their own member doc as manager/staff only (not owner),
+        // unless they are the hardcoded owner.
+        allow create: if isSignedIn() && request.auth.uid == uid && (
+          isHardcodedOwner() ||
+          (request.resource.data.role in ["manager", "staff"]
+            && request.resource.data.role != "owner")
+        );
+        // Allow self profile updates, and one-time staff→manager upgrade so
+        // shop floor accounts regain live write access after the sync fix.
+        allow update: if canManageMembers(shopId)
+          || (isHardcodedOwner() && request.auth.uid == uid)
+          || (isSignedIn() && request.auth.uid == uid
+              && request.resource.data.role != "owner"
+              && (
+                resource.data.role == request.resource.data.role
+                || (resource.data.role == "staff"
+                    && request.resource.data.role == "manager")
+              ));
+        allow delete: if canManageMembers(shopId);
+      }
+
+      match /users/{uid} {
+        allow read: if canReadShop(shopId);
+        allow write: if canManageMembers(shopId) || isHardcodedOwner();
+      }
+
+      match /entries/{docId} {
+        allow read: if canReadShop(shopId);
+        allow create, update, delete: if canWriteShop(shopId);
+      }
+
+      match /customers/{docId} {
+        allow read: if canReadShop(shopId);
+        allow create, update, delete: if canWriteShop(shopId);
+      }
+
+      match /settings/{docId} {
+        allow read: if canReadShop(shopId);
+        allow create, update, delete: if canWriteShop(shopId);
+      }
+
+      match /{document=**} {
+        allow read: if canReadShop(shopId);
+        allow write: if canWriteShop(shopId);
+      }
+    }
+  }
+}
