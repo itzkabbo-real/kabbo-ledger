@@ -1,0 +1,142 @@
+rules_version = '2';
+
+// Manager sync fix: new floor accounts must be able to self-join as manager and write
+// to the shared shop. Invite-only + default "staff" was the #1 reason managers saw
+// empty feeds — member doc creation failed silently and every write was denied.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isHardcodedOwner() {
+      return isSignedIn() &&
+        (request.auth.uid == "OWNER_UID_PLACEHOLDER" ||
+         request.auth.token.email.lower() == "owner_email_placeholder@example.com");
+    }
+
+    function memberDoc(shopId) {
+      return get(/databases/$(database)/documents/shops/$(shopId)/members/$(request.auth.uid));
+    }
+
+    function isMember(shopId) {
+      return isSignedIn() && (isHardcodedOwner() || memberDoc(shopId).data.role in ['owner', 'manager', 'staff']);
+    }
+
+    function isOwnerOrManager(shopId) {
+      return isSignedIn() &&
+        (isHardcodedOwner() ||
+          (memberDoc(shopId).data.role == 'owner') ||
+          (memberDoc(shopId).data.role == 'manager'));
+    }
+
+    function isOwner(shopId) {
+      return isSignedIn() && (isHardcodedOwner() || memberDoc(shopId).data.role == 'owner');
+    }
+
+    function hasValidInvite(shopId) {
+      return isSignedIn() && request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/shops/$(shopId)/invites/$(request.auth.token.email.lower()));
+    }
+
+    function inviteRole(shopId) {
+      return get(/databases/$(database)/documents/shops/$(shopId)/invites/$(request.auth.token.email.lower())).data.role;
+    }
+
+    match /shops/{shopId} {
+
+      match /members/{memberId} {
+        allow read: if (isSignedIn() && request.auth.uid == memberId) || isMember(shopId);
+
+        // Owner bootstrap, invited join (optional), or first-time manager self-join.
+        allow create: if isSignedIn() && request.auth.uid == memberId &&
+          (
+            (isHardcodedOwner() && request.resource.data.role == 'owner') ||
+            (hasValidInvite(shopId) && request.resource.data.role in ['manager', 'staff'] &&
+              (!('role' in inviteRole(shopId)) || request.resource.data.role == inviteRole(shopId))) ||
+            (!isHardcodedOwner() && !hasValidInvite(shopId) && request.resource.data.role == 'manager')
+          );
+
+        allow update: if isOwner(shopId) ||
+          (isSignedIn() && request.auth.uid == memberId &&
+            request.resource.data.role != 'owner' &&
+            (
+              resource.data.role == request.resource.data.role ||
+              (resource.data.role == 'staff' && request.resource.data.role == 'manager')
+            ));
+
+        allow delete: if isOwner(shopId);
+      }
+
+      match /invites/{email} {
+        allow read: if isOwnerOrManager(shopId);
+        allow write: if isOwnerOrManager(shopId);
+      }
+
+      match /stock/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /sales/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /dues/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /ledger/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /exchanges/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /activity/{docId} {
+        allow read: if isMember(shopId);
+        allow create: if isOwnerOrManager(shopId);
+        allow update, delete: if false;
+      }
+
+      match /customers/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /purchases/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /suppliers/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /counters/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isOwnerOrManager(shopId);
+        allow delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
