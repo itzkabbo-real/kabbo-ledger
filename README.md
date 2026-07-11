@@ -1,7 +1,30 @@
 # Kabbo Digital Ledger
 
-Mobile-first ledger / POS for a used-phone shop, rebuilt so every device — owner,
-managers, staff — shares **one live feed** instead of isolated per-browser storage.
+Mobile-first ledger / POS for **Kabbo Mobile Shop**, upgraded to work at the same
+operational level as [Shopstick](https://shopstick.com.bd/) while keeping the same
+module structure (Dashboard, POS, Stock, Dues, Ledger, Reports, Settings).
+
+Every device — owner, managers, staff — shares **one live Firestore feed** instead of
+isolated per-browser storage.
+
+## Shopstick reference (what we matched)
+
+Analyzed the live Kabbo account on Shopstick (`+8801727057913`) and its API at
+`https://backend.shopstick.com.bd/api`. Shopstick is a Next.js + REST backend platform
+with these core modules:
+
+| Shopstick module | Kabbo ledger equivalent |
+|------------------|-------------------------|
+| Phone + password login | `Login` — `+88` phone input, same UX pattern |
+| Dashboard overview & stats | `Dashboard` — sales/profit/due/purchase cards, monthly chart, recent sales |
+| Smart Billing & POS | `POS` — subtotal/discount/grand total, invoice numbers (`INV-YYYYMMDD-…`) |
+| Products / inventory (IMEI) | `Stock` — phone stock with IMEI tracking |
+| Customers + invoice due | `Dues` — customer list + outstanding balances |
+| Accounting / expenses | `Ledger` — expenses, purchases, cash in/out |
+| Reports (sales, P&L) | `Reports` — sales stats, monthly profit/loss, CSV export |
+| Team / settings | `Settings` — invites, roles, Telegram alerts |
+
+Kabbo keeps its **existing tab structure** — modules are upgraded, not renamed or removed.
 
 ## Root cause of "manager input never reaches my feed"
 
@@ -71,12 +94,26 @@ shops/{shopId}
   dues/{customerPhone}   running due balance per customer
   ledger/{id}            expenses, cash in/out, due collections (cashflow, not profit)
   exchanges/{id}         phone-for-phone exchange deals
-  activity/{id}          append-only feed powering the live dashboard
+  customers/{phone}       customer directory (synced to POS)
+  purchases/{id}          supplier purchases
+  suppliers/{id}          supplier directory
+  counters/sales          invoice sequence counter
 ```
 
 Backward-compatible field names (`deviceName`, `amount`, `cost`, `prepCost`, `due`,
 `dueAmount`, ...) are normalized in `src/lib/utils.js` instead of migrated/deleted, so
 older documents keep rendering correctly.
+
+## Phone login setup (Shopstick-style)
+
+Shopstick uses phone + password. Firebase Auth requires an email, so phone numbers map to:
+
+```
+phone.8801727057913@kabbomobile.shop
+```
+
+Create the owner account once in Firebase Authentication with that email and your
+chosen password. Staff invited by email can still use Google sign-in.
 
 ## Local development
 

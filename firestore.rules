@@ -104,6 +104,30 @@ service cloud.firestore {
         allow create: if isMember(shopId);
         allow update, delete: if false;
       }
+
+      match /customers/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isMember(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /purchases/{docId} {
+        allow read: if isMember(shopId);
+        allow create: if isMember(shopId);
+        allow update, delete: if isOwnerOrManager(shopId);
+      }
+
+      match /suppliers/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isMember(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /counters/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isMember(shopId);
+        allow delete: if false;
+      }
     }
 
     match /{document=**} {

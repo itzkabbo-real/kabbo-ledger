@@ -3,15 +3,17 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
 import { db, SHOP_ID } from '../firebase.js';
-import { num } from '../lib/utils.js';
+import { formatInvoiceNo, normalizeBangladeshPhone, num } from '../lib/utils.js';
 
 function subscribe(colName, orderField, setState, setError) {
   const ref = query(collection(db, 'shops', SHOP_ID, colName), orderBy(orderField, 'desc'));
@@ -24,11 +26,6 @@ function subscribe(colName, orderField, setState, setError) {
   );
 }
 
-// Every screen that calls useShopData() opens a live onSnapshot listener on the
-// SAME shop-scoped collections. That is the whole fix for "manager input doesn't
-// reach my feed": as soon as a manager's device writes a document, Firestore pushes
-// the change to every other open listener - owner dashboard, reports, other staff -
-// typically in well under a second, online or the moment connectivity returns.
 export function useShopData() {
   const [stock, setStock] = useState([]);
   const [sales, setSales] = useState([]);
@@ -36,6 +33,9 @@ export function useShopData() {
   const [ledger, setLedger] = useState([]);
   const [exchanges, setExchanges] = useState([]);
   const [activity, setActivity] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [error, setError] = useState(null);
   const [ready, setReady] = useState(false);
 
@@ -47,14 +47,35 @@ export function useShopData() {
       subscribe('ledger', 'createdAt', setLedger, setError),
       subscribe('exchanges', 'createdAt', setExchanges, setError),
       subscribe('activity', 'createdAt', setActivity, setError),
+      subscribe('customers', 'updatedAt', setCustomers, setError),
+      subscribe('purchases', 'createdAt', setPurchases, setError),
+      subscribe('suppliers', 'updatedAt', setSuppliers, setError),
     ];
     setReady(true);
     return () => unsubs.forEach((u) => u());
   }, []);
 
   const stockById = useMemo(() => Object.fromEntries(stock.map((s) => [s.id, s])), [stock]);
+  const customersByPhone = useMemo(
+    () => Object.fromEntries(customers.map((c) => [normalizeBangladeshPhone(c.phone), c])),
+    [customers]
+  );
 
-  return { stock, sales, dues, ledger, exchanges, activity, stockById, ready, error };
+  return {
+    stock,
+    sales,
+    dues,
+    ledger,
+    exchanges,
+    activity,
+    customers,
+    purchases,
+    suppliers,
+    stockById,
+    customersByPhone,
+    ready,
+    error,
+  };
 }
 
 async function logActivity(actorName, action, detail) {
@@ -63,6 +84,16 @@ async function logActivity(actorName, action, detail) {
     action,
     detail,
     createdAt: serverTimestamp(),
+  });
+}
+
+async function nextInvoiceSeq() {
+  const counterRef = doc(db, 'shops', SHOP_ID, 'counters', 'sales');
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(counterRef);
+    const next = snap.exists() ? num(snap.data().seq) + 1 : 1;
+    tx.set(counterRef, { seq: next, updatedAt: serverTimestamp() }, { merge: true });
+    return next;
   });
 }
 
@@ -88,10 +119,81 @@ export async function updateStockItem(stockId, patch, actorName) {
   await logActivity(actorName, 'stock_update', `Updated stock item ${stockId}`);
 }
 
+export async function addCustomer(customer, actorName) {
+  const phone = normalizeBangladeshPhone(customer.phone);
+  const ref = doc(db, 'shops', SHOP_ID, 'customers', phone);
+  await setDoc(
+    ref,
+    {
+      name: customer.name,
+      phone,
+      address: customer.address || '',
+      status: 'active',
+      createdBy: actorName,
+      updatedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+  await logActivity(actorName, 'customer_add', `Added customer ${customer.name}`);
+  return phone;
+}
+
+export async function addSupplier(supplier, actorName) {
+  const ref = await addDoc(collection(db, 'shops', SHOP_ID, 'suppliers'), {
+    name: supplier.name,
+    phone: normalizeBangladeshPhone(supplier.phone || ''),
+    address: supplier.address || '',
+    status: 'active',
+    createdBy: actorName,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  await logActivity(actorName, 'supplier_add', `Added supplier ${supplier.name}`);
+  return ref.id;
+}
+
+export async function recordPurchase(purchase, actorName) {
+  const totalCost = num(purchase.totalCost) || num(purchase.unitCost) * num(purchase.quantity, 1);
+  const paidAmount = num(purchase.paidAmount);
+  const dueAmount = Math.max(totalCost - paidAmount, 0);
+  const ref = await addDoc(collection(db, 'shops', SHOP_ID, 'purchases'), {
+    ...purchase,
+    totalCost,
+    paidAmount,
+    dueAmount,
+    createdBy: actorName,
+    createdAt: serverTimestamp(),
+  });
+  await addDoc(collection(db, 'shops', SHOP_ID, 'ledger'), {
+    type: 'purchase',
+    amount: totalCost,
+    note: purchase.productLabel || purchase.supplierName || 'Purchase',
+    supplierName: purchase.supplierName,
+    createdBy: actorName,
+    createdAt: serverTimestamp(),
+  });
+  await logActivity(actorName, 'purchase', `Purchase ${purchase.productLabel || 'item'} for Tk ${totalCost}`);
+  return ref.id;
+}
+
 export async function recordSale(sale, actorName) {
-  const dueAmount = Math.max(num(sale.sellPrice) - num(sale.paidAmount), 0);
+  const subtotal = num(sale.subtotal ?? sale.sellPrice);
+  const discount = num(sale.discount);
+  const grandTotal = Math.max(subtotal - discount, 0);
+  const paidAmount = num(sale.paidAmount);
+  const dueAmount = Math.max(grandTotal - paidAmount, 0);
+  const invoiceSeq = await nextInvoiceSeq();
+  const invoiceNo = formatInvoiceNo(invoiceSeq);
+
   const saleRef = await addDoc(collection(db, 'shops', SHOP_ID, 'sales'), {
     ...sale,
+    invoiceNo,
+    subtotal,
+    discount,
+    sellPrice: grandTotal,
+    grandTotal,
+    paidAmount,
     dueAmount,
     paymentStatus: dueAmount > 0 ? 'due' : 'paid',
     createdBy: actorName,
@@ -103,6 +205,17 @@ export async function recordSale(sale, actorName) {
       status: 'sold',
       updatedAt: serverTimestamp(),
     });
+  }
+
+  if (sale.customerPhone) {
+    await addCustomer(
+      {
+        name: sale.customerName,
+        phone: sale.customerPhone,
+        address: sale.customerAddress,
+      },
+      actorName
+    );
   }
 
   if (dueAmount > 0 && sale.customerPhone) {
@@ -120,20 +233,23 @@ export async function recordSale(sale, actorName) {
   await logActivity(
     actorName,
     'sale',
-    `Sold ${sale.productLabel || 'item'} for Tk ${num(sale.sellPrice)}${dueAmount > 0 ? ` (due Tk ${dueAmount})` : ''}`
+    `${invoiceNo}: ${sale.productLabel || 'item'} Tk ${grandTotal}${dueAmount > 0 ? ` (due Tk ${dueAmount})` : ''}`
   );
-  return saleRef.id;
+  return { id: saleRef.id, invoiceNo, grandTotal, dueAmount };
 }
 
 export async function upsertDue({ customerName, customerPhone, customerAddress, deltaDue }, actorName) {
-  const dueRef = doc(db, 'shops', SHOP_ID, 'dues', customerPhone);
+  const phone = normalizeBangladeshPhone(customerPhone);
+  const dueRef = doc(db, 'shops', SHOP_ID, 'dues', phone);
+  const existing = await getDoc(dueRef);
+  const currentDue = existing.exists() ? num(existing.data().totalDue) : 0;
   await setDoc(
     dueRef,
     {
       customerName,
-      customerPhone,
+      customerPhone: phone,
       customerAddress,
-      totalDue: num(deltaDue),
+      totalDue: currentDue + num(deltaDue),
       updatedAt: serverTimestamp(),
       createdBy: actorName,
     },
@@ -142,16 +258,25 @@ export async function upsertDue({ customerName, customerPhone, customerAddress, 
 }
 
 export async function collectDue(customerPhone, amount, actorName) {
-  const dueRef = doc(db, 'shops', SHOP_ID, 'dues', customerPhone);
+  const phone = normalizeBangladeshPhone(customerPhone);
+  const dueRef = doc(db, 'shops', SHOP_ID, 'dues', phone);
+  const existing = await getDoc(dueRef);
+  const currentDue = existing.exists() ? num(existing.data().totalDue) : 0;
+  const collected = Math.min(num(amount), currentDue);
+  const remaining = Math.max(currentDue - collected, 0);
+
   await addDoc(collection(db, 'shops', SHOP_ID, 'ledger'), {
     type: 'due_collection',
-    amount: num(amount),
-    customerPhone,
+    amount: collected,
+    customerPhone: phone,
     createdBy: actorName,
     createdAt: serverTimestamp(),
   });
-  await updateDoc(dueRef, { updatedAt: serverTimestamp() });
-  await logActivity(actorName, 'due_collection', `Collected Tk ${num(amount)} from ${customerPhone}`);
+  await updateDoc(dueRef, {
+    totalDue: remaining,
+    updatedAt: serverTimestamp(),
+  });
+  await logActivity(actorName, 'due_collection', `Collected Tk ${collected} from ${phone}`);
 }
 
 export async function addLedgerEntry(entry, actorName) {

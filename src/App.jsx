@@ -31,6 +31,7 @@ export default function App() {
           <h2>Kabbo Digital Ledger</h2>
           <span className="muted small">
             {auth.displayName} &middot; {auth.role}
+            {auth.phone ? ` &middot; ${auth.phone}` : ''}
           </span>
         </div>
         <button className="btn btn-secondary btn-sm" onClick={auth.logout}>
@@ -40,11 +41,19 @@ export default function App() {
 
       <main className="main-content">
         {tab === 'dashboard' && <Dashboard shopData={shopData} online={auth.online} />}
-        {tab === 'pos' && <POS stock={shopData.stock} actorName={auth.displayName} />}
+        {tab === 'pos' && <POS stock={shopData.stock} customers={shopData.customers} actorName={auth.displayName} />}
         {tab === 'stock' && <Stock stock={shopData.stock} actorName={auth.displayName} />}
-        {tab === 'dues' && <Dues dues={shopData.dues} actorName={auth.displayName} />}
+        {tab === 'dues' && <Dues dues={shopData.dues} customers={shopData.customers} actorName={auth.displayName} />}
         {tab === 'ledger' && <Ledger ledger={shopData.ledger} actorName={auth.displayName} />}
-        {tab === 'reports' && <Reports stock={shopData.stock} sales={shopData.sales} dues={shopData.dues} />}
+        {tab === 'reports' && (
+          <Reports
+            stock={shopData.stock}
+            sales={shopData.sales}
+            dues={shopData.dues}
+            ledger={shopData.ledger}
+            stockById={shopData.stockById}
+          />
+        )}
         {tab === 'settings' && <Settings user={auth.user} role={auth.role} />}
       </main>
 

@@ -7,6 +7,10 @@ import {
   signOut,
 } from 'firebase/auth';
 import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import {
+  authEmailToPhone,
+  phoneToAuthEmail,
+} from '../lib/utils.js';
 import { auth, db, FIREBASE_CONFIGURED, OWNER_EMAIL, OWNER_UID, SHOP_ID } from '../firebase.js';
 
 function resolveRole(user, memberDoc) {
@@ -88,19 +92,28 @@ export function useAuth() {
     await signInWithEmailAndPassword(auth, email, password);
   }, []);
 
+  const loginWithPhone = useCallback(async (phone, password) => {
+    const email = phoneToAuthEmail(phone);
+    await signInWithEmailAndPassword(auth, email, password);
+  }, []);
+
   const logout = useCallback(async () => {
     await signOut(auth);
   }, []);
+
+  const phone = user ? authEmailToPhone(user.email || '') : '';
 
   return {
     user,
     role,
     displayName,
+    phone,
     authLoading,
     online,
     isConfigured: FIREBASE_CONFIGURED,
     loginWithGoogle,
     loginWithEmail,
+    loginWithPhone,
     logout,
   };
 }
