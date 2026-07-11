@@ -1,0 +1,94 @@
+rules_version = '2';
+
+// This is the server-side half of the live-sync fix. If these rules are too strict,
+// writes from a manager's device fail silently (permission-denied) and never reach
+// Firestore, so the owner's live feed has nothing to show. If they are too loose,
+// anyone can read/write the shop. The rules below scope every read/write to signed-in
+// members of that specific shop, and hardcode the owner so a missing/corrupted
+// members/{uid} doc can never lock the real owner out or let someone self-promote.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isHardcodedOwner() {
+      return isSignedIn() &&
+        (request.auth.uid == "OWNER_UID_PLACEHOLDER" ||
+         request.auth.token.email.lower() == "owner_email_placeholder@example.com");
+    }
+
+    function memberDoc(shopId) {
+      return get(/databases/$(database)/documents/shops/$(shopId)/members/$(request.auth.uid));
+    }
+
+    function isMember(shopId) {
+      return isSignedIn() && (isHardcodedOwner() || memberDoc(shopId).data.role in ['owner', 'manager', 'staff']);
+    }
+
+    function isOwnerOrManager(shopId) {
+      return isSignedIn() &&
+        (isHardcodedOwner() ||
+          (memberDoc(shopId).data.role == 'owner') ||
+          (memberDoc(shopId).data.role == 'manager'));
+    }
+
+    function isOwner(shopId) {
+      return isSignedIn() && (isHardcodedOwner() || memberDoc(shopId).data.role == 'owner');
+    }
+
+    match /shops/{shopId} {
+
+      match /members/{memberId} {
+        allow read: if isMember(shopId);
+        // Anyone signed in may create their own member doc, but only as staff -
+        // role escalation must go through the owner.
+        allow create: if isSignedIn() && request.auth.uid == memberId &&
+          (request.resource.data.role == 'staff' || isHardcodedOwner());
+        allow update: if isOwner(shopId);
+        allow delete: if isOwner(shopId);
+      }
+
+      match /stock/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isMember(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /sales/{docId} {
+        allow read: if isMember(shopId);
+        allow create: if isMember(shopId);
+        allow update, delete: if isOwnerOrManager(shopId);
+      }
+
+      match /dues/{docId} {
+        allow read: if isMember(shopId);
+        allow create, update: if isMember(shopId);
+        allow delete: if isOwnerOrManager(shopId);
+      }
+
+      match /ledger/{docId} {
+        allow read: if isMember(shopId);
+        allow create: if isMember(shopId);
+        allow update, delete: if isOwnerOrManager(shopId);
+      }
+
+      match /exchanges/{docId} {
+        allow read: if isMember(shopId);
+        allow create: if isMember(shopId);
+        allow update, delete: if isOwnerOrManager(shopId);
+      }
+
+      match /activity/{docId} {
+        allow read: if isMember(shopId);
+        allow create: if isMember(shopId);
+        allow update, delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
