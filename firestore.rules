@@ -56,12 +56,12 @@ service cloud.firestore {
 
       match /members/{uid} {
         allow read: if canReadShop(shopId) || (isSignedIn() && request.auth.uid == uid);
-        // New users may create their own member doc as manager/staff only (not owner),
-        // unless they are the hardcoded owner.
+        // Hardcoded owner may create owner/manager. Other signed-in users may
+        // self-join only as manager/staff (shop is invite-by-account for Kabbo).
         allow create: if isSignedIn() && request.auth.uid == uid && (
-          isHardcodedOwner() ||
-          (request.resource.data.role in ["manager", "staff"]
-            && request.resource.data.role != "owner")
+          (isHardcodedOwner() && request.resource.data.role in ["owner", "manager"]) ||
+          (!isHardcodedOwner()
+            && request.resource.data.role in ["manager", "staff"])
         );
         // Allow self profile updates, and one-time staff→manager upgrade so
         // shop floor accounts regain live write access after the sync fix.

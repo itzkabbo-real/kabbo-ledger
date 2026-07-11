@@ -97,14 +97,9 @@ export async function resolveShopRole(user) {
     return role;
   }
 
-  const membersSnap = await getDocs(
-    collection(db, "shops", SHOP_ID, "members")
-  );
-  const ownerExists = membersSnap.docs.some(
-    (d) => d.data().role === "owner"
-  );
-  // First account ever → owner; otherwise shop worker → manager (writable)
-  const role = ownerExists ? "manager" : "owner";
+  // Non-hardcoded users may only self-create as manager (rules enforce this).
+  // Hardcoded owner is handled above via ensureOwnerRole.
+  const role = "manager";
   await setDoc(memberRef, {
     email: user.email || "",
     displayName: user.displayName || user.email || "User",
@@ -148,7 +143,8 @@ export function useAuth() {
           setRole(await resolveShopRole(next));
         } catch (err) {
           console.warn("role resolve failed:", err?.code || err);
-          setRole(isHardcodedOwner(next) ? "owner" : "manager");
+          // Do not fake writable manager — UI stays read-only until membership works.
+          setRole(isHardcodedOwner(next) ? "owner" : "staff");
         }
       } else {
         setRole(null);

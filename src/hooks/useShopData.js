@@ -358,26 +358,33 @@ export function useShopData(user) {
         if (db && user && hydratedRef.current) {
           const ops = diffStates(prev, next);
           if (ops.length) {
+            // Persist pending BEFORE flush so a mid-flight snapshot cannot wipe
+            // manager entries that are not in cloud yet.
+            const queued = [...loadPending(), ...ops];
+            savePending(queued);
             if (navigator.onLine) {
-              const queued = loadPending();
               setSyncStatus("syncing");
-              flushPendingOps([...queued, ...ops])
+              flushPendingOps(queued)
                 .then((remaining) => {
                   savePending(remaining);
-                  setSyncStatus(remaining.length ? "sync-failed" : "synced");
+                  setSyncStatus(remaining.length ? "sync-failed" : "syncing");
                   if (remaining.length) {
                     setSyncError("Some changes could not sync — retry when online");
                   } else {
+                    // Stay on syncing until onSnapshot confirms cloud catch-up.
                     setSyncError("");
+                    setTimeout(() => {
+                      if (!loadPending().length && navigator.onLine) {
+                        setSyncStatus("synced");
+                      }
+                    }, 800);
                   }
                 })
                 .catch((err) => {
-                  savePending([...loadPending(), ...ops]);
                   setSyncStatus("sync-failed");
                   setSyncError(err?.code || err?.message || "Sync failed");
                 });
             } else {
-              savePending([...loadPending(), ...ops]);
               setSyncStatus("offline");
             }
           }
