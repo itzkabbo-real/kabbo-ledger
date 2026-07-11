@@ -32,12 +32,17 @@ label { display: grid; gap: .45rem; color: #bdd0c7; font-size: .85rem; font-weig
 input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 12px; color: #f3fff8; background: #08130e; padding: .82rem .9rem; outline: none; }
 input:focus, select:focus, textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px #40e58b1c; }
 textarea { min-height: 82px; resize: vertical; }
+.check-label { display: flex; align-items: center; gap: .65rem; padding: .8rem; background: #14241c; border-radius: 12px; }
+.check-label input { width: auto; accent-color: var(--green); }
 .primary, .secondary { border: 0; border-radius: 12px; padding: .88rem 1.1rem; font-weight: 850; }
 .primary { color: #062111; background: var(--green); }
 .secondary { color: #eaffe8; background: var(--green-dark); border: 1px solid #326e4b; }
 .compact { padding: .6rem .85rem; }
 .link { color: var(--muted); background: none; border: 0; padding: .8rem 0; }
 .error { color: var(--danger); padding: .75rem; background: #401b1b; border-radius: 10px; font-size: .85rem; }
+.access-box { display: grid; gap: .55rem; margin: 1rem 0; padding: .85rem; color: var(--muted); background: #14241c; border: 1px solid var(--line); border-radius: 12px; overflow-wrap: anywhere; }
+.access-box p { margin: 0; }
+.access-box code { color: var(--green); }
 
 .app-shell { min-height: 100vh; }
 header { position: sticky; z-index: 10; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem max(1rem, calc((100vw - 1180px) / 2)); background: #07110de8; border-bottom: 1px solid #1a3026; backdrop-filter: blur(18px); }

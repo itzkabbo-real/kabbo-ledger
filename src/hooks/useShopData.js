@@ -109,6 +109,9 @@ export function useShopData(user) {
       const batch = writeBatch(db);
       const stockRef = doc(shopCollection("stock"));
       const entryRef = doc(shopCollection("entries"));
+      const batteryHealth = number(form.batteryHealth);
+      const risky = form.icloudFrpStatus === "locked";
+      const warning = !imeiSerial || (batteryHealth > 0 && batteryHealth < 75) || !form.certChecksPassed;
       const item = {
         ...auditFields(),
         category: form.category || "Used Phone",
@@ -126,6 +129,15 @@ export function useShopData(user) {
         warrantyDays: number(form.warrantyDays),
         notes: form.notes?.trim() || "",
         status: "in_stock",
+        certChecklist: {
+          imeiChecked: Boolean(imeiSerial),
+          batteryHealth,
+          icloudFrpStatus: form.icloudFrpStatus || "unknown",
+          deviceHistoryNotes: form.notes?.trim() || "",
+          warrantyDays: number(form.warrantyDays),
+          finalGrade: risky ? "Risky" : warning ? "Warning" : "Certified",
+          certifiedResult: risky ? "fail" : warning ? "warning" : "pass",
+        },
       };
       batch.set(stockRef, item);
       batch.set(entryRef, {
@@ -207,7 +219,8 @@ export function useShopData(user) {
           { merge: true },
         );
       }
-      return commit(batch);
+      const result = await commit(batch);
+      return { ...result, entryId: entryRef.id };
     },
     [auditFields, commit, data.stock],
   );
@@ -252,8 +265,153 @@ export function useShopData(user) {
     [auditFields, commit],
   );
 
+  const saveExchange = useCallback(
+    async (form) => {
+      const newPhone = data.stock.find((item) => item.id === form.newPhoneStockId);
+      if (!newPhone || normalizeStock(newPhone).availableQty < 1) {
+        throw new Error("Select an available new phone");
+      }
+      if (!form.oldPhoneModel?.trim()) throw new Error("Old phone model is required");
+      const oldImei = cleanImei(form.oldPhoneIMEI);
+      const item = normalizeStock(newPhone);
+      if (oldImei && oldImei === cleanImei(item.imeiSerial)) {
+        throw new Error("Old and new phone IMEI cannot be the same");
+      }
+
+      const allowance = number(form.oldPhoneAllowanceValue);
+      const oldPrep = number(form.oldPhonePreparationCost);
+      const expectedResale = number(form.oldPhoneExpectedResalePrice);
+      const newSale = number(form.newPhoneSalePrice);
+      const cashFrom = number(form.cashFromCustomer);
+      const cashPaid = number(form.cashPaidToCustomer);
+      const due = number(form.dueAmount);
+      const customerId = String(form.customerPhone || "").replace(/\D/g, "");
+      if (due > 0 && (!form.customerName?.trim() || customerId.length < 7)) {
+        throw new Error("Customer name and a valid phone are required when exchange has due");
+      }
+
+      const entryRef = doc(shopCollection("entries"));
+      const oldStockRef = doc(shopCollection("stock"));
+      const batch = writeBatch(db);
+      const exchangeEstimatedProfit =
+        newSale - item.buyPrice + expectedResale - allowance - oldPrep;
+
+      batch.update(doc(db, "shops", SHOP_ID, "stock", item.id), {
+        soldQuantity: increment(1),
+        status: item.availableQty === 1 ? "exchanged" : "in_stock",
+        updatedAt: serverTimestamp(),
+        lastOperationId: entryRef.id,
+      });
+      batch.set(oldStockRef, {
+        ...auditFields(),
+        category: "Used Phone",
+        brand: form.oldPhoneBrand?.trim() || "",
+        model: form.oldPhoneModel.trim(),
+        imeiSerial: oldImei,
+        quantity: 1,
+        soldQuantity: 0,
+        buyPrice: allowance,
+        preparationCost: oldPrep,
+        sellPrice: expectedResale,
+        notes: form.oldPhoneCondition?.trim() || "",
+        status: "in_stock",
+        source: "exchange",
+      });
+      batch.set(entryRef, {
+        ...auditFields(),
+        type: "exchange",
+        newPhoneStockId: item.id,
+        newPhoneProduct: `${item.brand} ${item.model}`.trim(),
+        newPhoneBuyCost: item.buyPrice,
+        newPhoneSalePrice: newSale,
+        oldPhoneStockId: oldStockRef.id,
+        oldPhoneBrand: form.oldPhoneBrand?.trim() || "",
+        oldPhoneModel: form.oldPhoneModel.trim(),
+        oldPhoneIMEI: oldImei,
+        oldPhoneCondition: form.oldPhoneCondition?.trim() || "",
+        oldPhoneAllowanceValue: allowance,
+        oldPhonePreparationCost: oldPrep,
+        oldPhoneExpectedResalePrice: expectedResale,
+        cashFromCustomer: cashFrom,
+        cashPaidToCustomer: cashPaid,
+        cashNet: cashFrom - cashPaid,
+        dueAmount: due,
+        exchangeEstimatedProfit,
+        customerId: customerId || null,
+        customerName: form.customerName?.trim() || "",
+        customerPhone: form.customerPhone?.trim() || "",
+        riskGrade: form.riskGrade || "medium",
+        approvalResult: form.approvalResult || "approved",
+      });
+      if (item.imeiSerial && item.availableQty === 1) {
+        batch.update(doc(db, "shops", SHOP_ID, "imeiIndex", cleanImei(item.imeiSerial)), {
+          active: false,
+          soldEntryId: entryRef.id,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      if (oldImei) {
+        batch.set(doc(db, "shops", SHOP_ID, "imeiIndex", oldImei), {
+          stockId: oldStockRef.id,
+          active: true,
+          ...auditFields(),
+        });
+      }
+      if (due > 0) {
+        batch.set(
+          doc(db, "shops", SHOP_ID, "customers", customerId),
+          {
+            name: form.customerName.trim(),
+            phone: form.customerPhone.trim(),
+            dueBalance: increment(due),
+            totalDueCreated: increment(due),
+            updatedAt: serverTimestamp(),
+            shopId: SHOP_ID,
+            lastOperationId: entryRef.id,
+          },
+          { merge: true },
+        );
+      }
+      const result = await commit(batch);
+      return { ...result, entryId: entryRef.id, exchangeEstimatedProfit };
+    },
+    [auditFields, commit, data.stock],
+  );
+
+  const setMember = useCallback(
+    async ({ uid, role, active = true }) => {
+      const cleanUid = uid?.trim();
+      if (!cleanUid || !["manager", "staff", "viewer"].includes(role)) {
+        throw new Error("Enter a Firebase UID and valid role");
+      }
+      const batch = writeBatch(db);
+      batch.set(
+        doc(db, "shops", SHOP_ID, "members", cleanUid),
+        {
+          role,
+          active,
+          shopId: SHOP_ID,
+          updatedAt: serverTimestamp(),
+          updatedBy: user.uid,
+        },
+        { merge: true },
+      );
+      return commit(batch);
+    },
+    [commit, user.uid],
+  );
+
   return useMemo(
-    () => ({ ...data, sync, addStock, saveSale, collectDue, addExpense }),
-    [data, sync, addStock, saveSale, collectDue, addExpense],
+    () => ({
+      ...data,
+      sync,
+      addStock,
+      saveSale,
+      collectDue,
+      addExpense,
+      saveExchange,
+      setMember,
+    }),
+    [data, sync, addStock, saveSale, collectDue, addExpense, saveExchange, setMember],
   );
 }

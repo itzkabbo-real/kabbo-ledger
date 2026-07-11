@@ -88,11 +88,19 @@ service cloud.firestore {
           && request.resource.data.soldQuantity <= request.resource.data.quantity
           && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(["soldQuantity", "status", "updatedAt", "lastOperationId"])
-          && operation(shopId, request.resource.data.lastOperationId).type == "sale"
-          && operation(shopId, request.resource.data.lastOperationId).stockId == stockId
+          && operation(shopId, request.resource.data.lastOperationId).type in ["sale", "exchange"]
+          && (
+            operation(shopId, request.resource.data.lastOperationId).stockId == stockId ||
+            operation(shopId, request.resource.data.lastOperationId).newPhoneStockId == stockId
+          )
           && (
             (request.resource.data.soldQuantity == request.resource.data.quantity
-              && request.resource.data.status == "sold") ||
+              && (
+                (operation(shopId, request.resource.data.lastOperationId).type == "sale"
+                  && request.resource.data.status == "sold") ||
+                (operation(shopId, request.resource.data.lastOperationId).type == "exchange"
+                  && request.resource.data.status == "exchanged")
+              )) ||
             (request.resource.data.soldQuantity < request.resource.data.quantity
               && request.resource.data.status == "in_stock")
           );
@@ -104,7 +112,7 @@ service cloud.firestore {
         allow create: if canWrite(shopId)
           && request.resource.data.shopId == shopId
           && request.resource.data.dueBalance > 0
-          && operation(shopId, request.resource.data.lastOperationId).type == "sale"
+          && operation(shopId, request.resource.data.lastOperationId).type in ["sale", "exchange"]
           && operation(shopId, request.resource.data.lastOperationId).customerId == customerId
           && request.resource.data.dueBalance
             == operation(shopId, request.resource.data.lastOperationId).dueAmount;
@@ -117,7 +125,7 @@ service cloud.firestore {
                 "name", "phone", "address", "dueBalance", "totalDueCreated",
                 "updatedAt", "lastOperationId"
               ])
-              && operation(shopId, request.resource.data.lastOperationId).type == "sale"
+              && operation(shopId, request.resource.data.lastOperationId).type in ["sale", "exchange"]
               && operation(shopId, request.resource.data.lastOperationId).customerId == customerId
               && request.resource.data.dueBalance == resource.data.dueBalance
                 + operation(shopId, request.resource.data.lastOperationId).dueAmount

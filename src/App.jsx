@@ -11,7 +11,7 @@ import {
 } from "./lib/domain";
 import { firebaseReady, SHOP_ID } from "./lib/firebase";
 
-const tabs = ["Dashboard", "Feed", "Stock", "POS", "Dues", "Reports"];
+const tabs = ["Dashboard", "Feed", "Stock", "POS", "Exchange", "Dues", "Reports"];
 const initialStock = {
   category: "Used Phone",
   brand: "",
@@ -26,6 +26,9 @@ const initialStock = {
   supplierName: "",
   warrantyDays: "",
   notes: "",
+  batteryHealth: "",
+  icloudFrpStatus: "clear",
+  certChecksPassed: false,
 };
 
 function SyncBadge({ sync }) {
@@ -94,6 +97,13 @@ function AuthScreen({ authState }) {
         <button className="link" onClick={() => setRegistering(!registering)}>
           {registering ? "Already registered? Sign in" : "New staff account? Register"}
         </button>
+        {authState.user && (
+          <div className="access-box">
+            <p>Send this UID to the owner to activate your account:</p>
+            <code>{authState.user.uid}</code>
+            <button className="link" onClick={authState.logout}>Sign out and use another account</button>
+          </div>
+        )}
         <small>Shop: {SHOP_ID}</small>
       </section>
     </main>
@@ -220,6 +230,7 @@ function Stock({ stock, canWrite, addStock }) {
             ["sellPrice", "Asking price", false, "number"],
             ["supplierName", "Supplier"],
             ["warrantyDays", "Warranty days", false, "number"],
+            ["batteryHealth", "Battery health %", false, "number"],
           ].map(([name, label, required, type]) => (
             <label key={name}>
               {label}
@@ -233,6 +244,18 @@ function Stock({ stock, canWrite, addStock }) {
               />
             </label>
           ))}
+          <label>
+            iCloud / FRP
+            <select value={form.icloudFrpStatus} onChange={(event) => setForm({ ...form, icloudFrpStatus: event.target.value })}>
+              <option value="clear">Clear</option>
+              <option value="locked">Locked</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </label>
+          <label className="check-label">
+            <input type="checkbox" checked={form.certChecksPassed} onChange={(event) => setForm({ ...form, certChecksPassed: event.target.checked })} />
+            Display, camera, speaker, mic, SIM and biometrics checked
+          </label>
           <label className="span-2">
             Device history / preparation notes
             <textarea
@@ -324,7 +347,89 @@ function Pos({ stock, saveSale }) {
   );
 }
 
-function Dues({ customers, collectDue }) {
+function Exchange({ stock, saveExchange }) {
+  const available = stock.map(normalizeStock).filter((item) => item.availableQty > 0);
+  const [form, setForm] = useState({
+    newPhoneStockId: "",
+    newPhoneSalePrice: "",
+    oldPhoneBrand: "",
+    oldPhoneModel: "",
+    oldPhoneIMEI: "",
+    oldPhoneCondition: "",
+    oldPhoneAllowanceValue: "",
+    oldPhonePreparationCost: "",
+    oldPhoneExpectedResalePrice: "",
+    cashFromCustomer: "",
+    cashPaidToCustomer: "",
+    dueAmount: "",
+    customerName: "",
+    customerPhone: "",
+    riskGrade: "medium",
+    approvalResult: "approved",
+  });
+  const [message, setMessage] = useState("");
+  const selected = available.find((item) => item.id === form.newPhoneStockId);
+  const estimatedProfit =
+    number(form.newPhoneSalePrice) -
+    number(selected?.buyPrice) +
+    number(form.oldPhoneExpectedResalePrice) -
+    number(form.oldPhoneAllowanceValue) -
+    number(form.oldPhonePreparationCost);
+  const choose = (id) => {
+    const item = available.find((row) => row.id === id);
+    setForm({ ...form, newPhoneStockId: id, newPhoneSalePrice: item?.sellPrice || "" });
+  };
+  const submit = async (event) => {
+    event.preventDefault();
+    setMessage("");
+    try {
+      const result = await saveExchange(form);
+      setMessage(
+        `${result.queued ? "Exchange queued offline" : "Exchange synced"} · estimated profit ${money(result.exchangeEstimatedProfit)}`,
+      );
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+  return (
+    <section className="panel">
+      <p className="eyebrow">Trade-in intelligence</p>
+      <h2>Phone exchange</h2>
+      <form className="form-grid" onSubmit={submit}>
+        <label className="span-2">
+          Phone leaving stock
+          <select required value={form.newPhoneStockId} onChange={(event) => choose(event.target.value)}>
+            <option value="">Select phone</option>
+            {available.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.brand} {item.model} · {item.imeiSerial || "No IMEI"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>New phone sale price<input type="number" min="0" required value={form.newPhoneSalePrice} onChange={(event) => setForm({ ...form, newPhoneSalePrice: event.target.value })} /></label>
+        <label>Old phone allowance<input type="number" min="0" required value={form.oldPhoneAllowanceValue} onChange={(event) => setForm({ ...form, oldPhoneAllowanceValue: event.target.value })} /></label>
+        <label>Old phone brand<input required value={form.oldPhoneBrand} onChange={(event) => setForm({ ...form, oldPhoneBrand: event.target.value })} /></label>
+        <label>Old phone model<input required value={form.oldPhoneModel} onChange={(event) => setForm({ ...form, oldPhoneModel: event.target.value })} /></label>
+        <label>Old phone IMEI<input value={form.oldPhoneIMEI} onChange={(event) => setForm({ ...form, oldPhoneIMEI: event.target.value })} /></label>
+        <label>Expected resale price<input type="number" min="0" value={form.oldPhoneExpectedResalePrice} onChange={(event) => setForm({ ...form, oldPhoneExpectedResalePrice: event.target.value })} /></label>
+        <label>Old phone preparation cost<input type="number" min="0" value={form.oldPhonePreparationCost} onChange={(event) => setForm({ ...form, oldPhonePreparationCost: event.target.value })} /></label>
+        <label>Condition<input value={form.oldPhoneCondition} onChange={(event) => setForm({ ...form, oldPhoneCondition: event.target.value })} /></label>
+        <label>Cash received<input type="number" min="0" value={form.cashFromCustomer} onChange={(event) => setForm({ ...form, cashFromCustomer: event.target.value })} /></label>
+        <label>Cash paid to customer<input type="number" min="0" value={form.cashPaidToCustomer} onChange={(event) => setForm({ ...form, cashPaidToCustomer: event.target.value })} /></label>
+        <label>Due amount<input type="number" min="0" value={form.dueAmount} onChange={(event) => setForm({ ...form, dueAmount: event.target.value })} /></label>
+        <label>Risk grade<select value={form.riskGrade} onChange={(event) => setForm({ ...form, riskGrade: event.target.value })}><option>low</option><option>medium</option><option>high</option></select></label>
+        <label>Customer name<input required={number(form.dueAmount) > 0} value={form.customerName} onChange={(event) => setForm({ ...form, customerName: event.target.value })} /></label>
+        <label>Customer phone<input required={number(form.dueAmount) > 0} value={form.customerPhone} onChange={(event) => setForm({ ...form, customerPhone: event.target.value })} /></label>
+        <div className="estimate span-2">Estimated exchange profit <strong>{money(estimatedProfit)}</strong></div>
+        {message && <p className="notice span-2">{message}</p>}
+        <button className="primary span-2" type="submit">Complete exchange and sync</button>
+      </form>
+    </section>
+  );
+}
+
+function Dues({ customers, collectDue, canWrite }) {
   const [amounts, setAmounts] = useState({});
   const [message, setMessage] = useState("");
   const collect = async (customer) => {
@@ -346,8 +451,8 @@ function Dues({ customers, collectDue }) {
           <article className="due-card" key={customer.id}>
             <div><h3>{customer.name}</h3><p>{customer.phone} · {customer.address}</p></div>
             <strong>{money(customer.dueBalance)}</strong>
-            <input type="number" min="0" max={customer.dueBalance} placeholder="Collection" value={amounts[customer.id] || ""} onChange={(event) => setAmounts({ ...amounts, [customer.id]: event.target.value })} />
-            <button className="secondary compact" onClick={() => collect(customer)}>Collect</button>
+            {canWrite && <input type="number" min="0" max={customer.dueBalance} placeholder="Collection" value={amounts[customer.id] || ""} onChange={(event) => setAmounts({ ...amounts, [customer.id]: event.target.value })} />}
+            {canWrite && <button className="secondary compact" onClick={() => collect(customer)}>Collect</button>}
           </article>
         ))}
         {!customers.some((customer) => number(customer.dueBalance) > 0) && <div className="empty">No outstanding customer dues.</div>}
@@ -387,6 +492,36 @@ function Reports({ entries, stock, customers, addExpense, canWrite }) {
   );
 }
 
+function Settings({ user, setMember }) {
+  const [member, setMemberForm] = useState({ uid: "", role: "manager", active: true });
+  const [message, setMessage] = useState("");
+  const submit = async (event) => {
+    event.preventDefault();
+    try {
+      await setMember(member);
+      setMessage(`${member.role} access saved.`);
+      setMemberForm({ ...member, uid: "" });
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+  return (
+    <section className="panel">
+      <p className="eyebrow">Owner controls</p>
+      <h2>Team access</h2>
+      <p className="muted">New users register first, then send the owner their Firebase UID. Only the owner can activate roles.</p>
+      <form className="form-grid" onSubmit={submit}>
+        <label className="span-2">User UID<input required value={member.uid} onChange={(event) => setMemberForm({ ...member, uid: event.target.value })} /></label>
+        <label>Role<select value={member.role} onChange={(event) => setMemberForm({ ...member, role: event.target.value })}><option value="manager">Manager</option><option value="staff">Staff</option><option value="viewer">Viewer</option></select></label>
+        <label>Access<select value={String(member.active)} onChange={(event) => setMemberForm({ ...member, active: event.target.value === "true" })}><option value="true">Active</option><option value="false">Disabled</option></select></label>
+        {message && <p className="notice span-2">{message}</p>}
+        <button className="primary span-2" type="submit">Save member access</button>
+      </form>
+      <div className="access-box"><span>Your UID</span><code>{user.uid}</code></div>
+    </section>
+  );
+}
+
 function App() {
   const authState = useAuth();
   const [active, setActive] = useState("Dashboard");
@@ -404,6 +539,7 @@ function AuthenticatedApp({ authState, active, setActive }) {
   const shop = useShopData(authState.user);
   const metrics = useMemo(() => dashboardMetrics(shop.entries, shop.stock, shop.customers), [shop.entries, shop.stock, shop.customers]);
   const canWrite = ["owner", "manager", "staff"].includes(authState.role);
+  const visibleTabs = authState.role === "owner" ? [...tabs, "Settings"] : tabs;
   return (
     <div className="app-shell">
       <header>
@@ -415,12 +551,14 @@ function AuthenticatedApp({ authState, active, setActive }) {
         {active === "Dashboard" && <Dashboard metrics={metrics} entries={shop.entries} />}
         {active === "Feed" && <section className="panel"><p className="eyebrow">Shared live stream</p><h2>Shop feed</h2><Feed entries={shop.entries} /></section>}
         {active === "Stock" && <Stock stock={shop.stock} canWrite={canWrite} addStock={shop.addStock} />}
-        {active === "POS" && <Pos stock={shop.stock} saveSale={shop.saveSale} />}
-        {active === "Dues" && <Dues customers={shop.customers} collectDue={shop.collectDue} />}
+        {active === "POS" && (canWrite ? <Pos stock={shop.stock} saveSale={shop.saveSale} /> : <div className="empty">Viewer accounts cannot create sales.</div>)}
+        {active === "Exchange" && (canWrite ? <Exchange stock={shop.stock} saveExchange={shop.saveExchange} /> : <div className="empty">Viewer accounts cannot create exchanges.</div>)}
+        {active === "Dues" && <Dues customers={shop.customers} collectDue={shop.collectDue} canWrite={canWrite} />}
         {active === "Reports" && <Reports entries={shop.entries} stock={shop.stock} customers={shop.customers} addExpense={shop.addExpense} canWrite={canWrite} />}
+        {active === "Settings" && authState.role === "owner" && <Settings user={authState.user} setMember={shop.setMember} />}
       </main>
       <nav>
-        {tabs.map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}</button>)}
+        {visibleTabs.map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}</button>)}
       </nav>
     </div>
   );
